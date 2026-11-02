@@ -1,0 +1,53 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# cocotb simulation artifacts
+sim_build/
+results.xml
+*_results.xml
+
+# Verilator generated files
+obj_dir/
+
+# Waveform files
+*.vcd
+*.fst
+*.vpd
+*.wlf
+*.ghw
+
+# Simulation executables and temporary files
+*.log
+*.out
+*.vvp
+*.dmp
+
+# Coverage output
+coverage.dat
+coverage.xml
+htmlcov/
+.coverage
+coverage/
+*.gcda
+*.gcno
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+core
+core.*
+.venv*/
