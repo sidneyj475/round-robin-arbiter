@@ -11,18 +11,20 @@ for n in [1, 2, 4, 8]:
     runner = get_runner("verilator")
 
     runner.build(
-        sources=list((root / "rtl").glob("*.sv")),
+        sources=[
+            *sorted((root / "rtl").glob("*.sv")),
+            root / "tb" / "arbiter_assertions.sv",
+            root / "tb" / "arbiter_bind.sv",
+        ],
         hdl_toplevel="round_robin_arbiter",
         build_dir=str(root / f"sim_build/n{n}"),
-        build_args=[f"-GN={n}"],
+        build_args=[f"-GN={n}", "--assert",],
         always=True,
     )
 
     runner.test(
         hdl_toplevel="round_robin_arbiter",
-        test_module=["test_arbiter",
-        ],
-        #test_filter="test_randomized",
+        test_module=["test_arbiter"],
         test_dir=str(root / "tb"),
         
     )

@@ -232,11 +232,24 @@ async def test_randomized(dut):
 
     rng = random.Random(42)
 
+    grant_counts = [0] * n
+
+    idle_count = 0
+    backpressure_count = 0
+    accepted_count = 0
+
+    accepted_grant_counts = [0] * n
+
+    seen_requests = set()
+
     for cycle in range(1000):
+
         await FallingEdge(dut.clk)
 
         req = rng.randrange(1 << n)
         ready = rng.randrange(2)
+
+        seen_requests.add(req)
 
         dut.req.value = req
         dut.ready.value = ready
@@ -255,5 +268,171 @@ async def test_randomized(dut):
             f"got={actual_grant:0{n}b}"
         )
 
+        if actual_grant != 0:
+            granted_index = actual_grant.bit_length() - 1
+            grant_counts[granted_index] += 1
+
+        if req == 0:
+            idle_count += 1
+
+        if actual_grant != 0 and ready == 0:
+            backpressure_count += 1
+
+        if actual_grant != 0 and ready == 1:
+            accepted_count += 1
+            granted_index = actual_grant.bit_length() - 1
+            accepted_grant_counts[granted_index] += 1
+
         await RisingEdge(dut.clk)
         model.update(actual_grant, ready)
+
+    dut._log.info(f"Grant coverage (N={n}): {grant_counts}")
+
+    assert all(count > 0 for count in grant_counts), (
+    f"Not all requesters were granted: {grant_counts}"
+    )
+
+    dut._log.info(
+        f"N={n}: idle={idle_count}, "
+        f"backpressure={backpressure_count}, "
+        f"accepted={accepted_count}"
+    )
+
+    assert idle_count > 0
+    assert backpressure_count > 0
+    assert accepted_count > 0
+    assert all(count > 0 for count in accepted_grant_counts)
+
+    dut._log.info(
+        f"Request patterns covered: {len(seen_requests)}/{1 << n}"
+    )
+
+@cocotb.test()
+async def test_mid_operation_reset(dut):
+    n = len(dut.req)
+    all_requests = (1 << n) - 1
+
+    clock = Clock(dut.clk, 10, unit="ns")
+    clock.start()
+
+    # Initial reset
+    dut.rst_n.value = 0
+    dut.req.value = 0
+    dut.ready.value = 0
+
+    await ClockCycles(dut.clk, 2)
+
+    dut.rst_n.value = 1
+    dut.req.value = all_requests
+    dut.ready.value = 1
+
+    await Timer(1, unit="ns")
+
+    # Initial priority must be R0
+    assert int(dut.grant.value) == 1
+
+    # Accept one transaction
+    await RisingEdge(dut.clk)
+    await Timer(1, unit="ns")
+
+    expected = 1 << (1 % n)
+
+    assert int(dut.grant.value) == expected, (
+        f"N={n}: expected {expected:0{n}b} "
+        f"after first transfer, "
+        f"got {int(dut.grant.value):0{n}b}"
+    )
+
+    # Assert asynchronous reset between clock edges
+    await FallingEdge(dut.clk)
+
+    dut.rst_n.value = 0
+    dut.ready.value = 0
+
+    # Check reset before the next rising edge
+    await Timer(1, unit="ns")
+
+    assert int(dut.grant.value) == 1, (
+        f"N={n}: priority did not reset to R0"
+    )
+
+    # Deassert reset
+    dut.rst_n.value = 1
+
+    await Timer(1, unit="ns")
+
+    assert int(dut.grant.value) == 1, (
+        f"N={n}: initial priority not preserved "
+        f"after reset release"
+    )
+
+    # Resume normal arbitration
+    dut.ready.value = 1
+
+    await RisingEdge(dut.clk)
+    await Timer(1, unit="ns")
+
+    assert int(dut.grant.value) == expected, (
+        f"N={n}: rotation did not resume "
+        f"correctly after reset"
+    )
+
+@cocotb.test()
+async def test_fairness_no_starvation(dut):
+    n = len(dut.req)
+    all_requests = (1 << n) - 1
+    rounds = 20
+
+    clock = Clock(dut.clk, 10, unit="ns")
+    clock.start()
+
+    # Reset the arbiter
+    dut.rst_n.value = 0
+    dut.req.value = 0
+    dut.ready.value = 0
+
+    await ClockCycles(dut.clk, 2)
+
+    # Begin continuous contention
+    await FallingEdge(dut.clk)
+
+    dut.rst_n.value = 1
+    dut.req.value = all_requests
+    dut.ready.value = 1
+
+    await Timer(1, unit="ns")
+
+    grant_counts = [0] * n
+
+    # Each requester should win once per round
+    for transaction in range(n * rounds):
+        expected_index = transaction % n
+        expected_grant = 1 << expected_index
+
+        actual_grant = int(dut.grant.value)
+
+        assert actual_grant == expected_grant, (
+            f"N={n}, transaction={transaction}: "
+            f"expected={expected_grant:0{n}b}, "
+            f"got={actual_grant:0{n}b}"
+        )
+
+        grant_counts[expected_index] += 1
+
+        # Accept current grant
+        await RisingEdge(dut.clk)
+
+        # Allow registered priority to update
+        await Timer(1, unit="ns")
+
+    # Every requester must receive exactly 20 grants
+    assert all(count == rounds for count in grant_counts), (
+        f"N={n}: unfair arbitration: {grant_counts}"
+    )
+
+    dut._log.info(
+        f"N={n}: fairness verified over "
+        f"{n * rounds} accepted transfers. "
+        f"Grant counts: {grant_counts}"
+    )
+
