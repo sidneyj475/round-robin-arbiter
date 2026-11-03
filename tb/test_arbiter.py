@@ -1,7 +1,8 @@
 
-import cocotb
+import cocotb, random
 from cocotb.clock import Clock
 from cocotb.triggers import Timer, RisingEdge, ClockCycles
+from arbiter_model import ArbiterModel
 
 
 @cocotb.test()
@@ -199,3 +200,43 @@ async def test_dynamic_requests(dut):
     await Timer(1, unit="ns")
 
     assert int(dut.grant.value) == 0b0010
+
+@cocotb.test()
+async def test_randomized(dut):
+    clock = Clock(dut.clk, 10, unit="ns")
+    clock.start()
+
+    n = len(dut.req)
+    model = ArbiterModel(n)
+
+    dut.rst_n.value = 0
+    dut.req.value = 0
+    dut.ready.value = 0
+
+    await ClockCycles(dut.clk, 2)
+    dut.rst_n.value = 1
+
+    rng = random.Random(42)
+
+    for cycle in range(100):
+        req = rng.randrange(1 << n)
+        ready = rng.randrange(2)
+
+        dut.req.value = req
+        dut.ready.value = ready
+
+        await Timer(1, unit="ns")
+
+        expected = model.expected_grant(req)
+        actual_grant = int(dut.grant.value)
+
+        assert actual_grant == expected, (
+            f"Cycle {cycle}: req={req:0{n}b}, "
+            f"ready={ready}, expected={expected:0{n}b}, "
+            f"got={actual_grant:0{n}b}"
+        )
+
+        await RisingEdge(dut.clk)
+        model.update(actual_grant, ready)
+
+        await Timer(1, unit="ns")
