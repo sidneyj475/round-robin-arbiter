@@ -25,9 +25,9 @@ jobs:
             flex bison libfl2 libfl-dev \
             zlib1g-dev
 
-      - name: Build and install Verilator 5.055
+      - name: Build and install Verilator 5.052
         run: |
-          git clone --depth 1 --branch v5.055 \
+          git clone --depth 1 --branch v5.052 \
             https://github.com/verilator/verilator.git \
             /tmp/verilator
 
