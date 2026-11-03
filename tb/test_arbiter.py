@@ -1,12 +1,14 @@
 
 import cocotb, random
 from cocotb.clock import Clock
-from cocotb.triggers import Timer, RisingEdge, ClockCycles
+from cocotb.triggers import Timer, RisingEdge, ClockCycles, FallingEdge
 from arbiter_model import ArbiterModel
 
 
 @cocotb.test()
 async def test_reset(dut):
+    n = len(dut.req)
+
     clock = Clock(dut.clk, 10, unit="ns")
     clock.start()
 
@@ -17,7 +19,7 @@ async def test_reset(dut):
     await ClockCycles(dut.clk, 2)
 
     dut.rst_n.value = 1
-    dut.req.value = 0b1111
+    dut.req.value = (1 << n) - 1
 
     await Timer(1, unit="ns")
 
@@ -25,6 +27,8 @@ async def test_reset(dut):
 
 @cocotb.test()
 async def test_round_robin_rotation(dut):
+    n = len(dut.req)
+
     clock = Clock(dut.clk, 10, unit="ns")
     clock.start()
 
@@ -36,7 +40,7 @@ async def test_round_robin_rotation(dut):
     await ClockCycles(dut.clk, 2)
 
     dut.rst_n.value = 1
-    dut.req.value = 0b1111
+    dut.req.value = (1 << n) - 1
 
     await Timer(1, unit="ns")
 
@@ -46,7 +50,7 @@ async def test_round_robin_rotation(dut):
     # Enable transfers
     dut.ready.value = 1
 
-    expected_grants = [0b0010, 0b0100, 0b1000, 0b0001] * 5
+    expected_grants = [1 << ((i + 1) % n) for i in range(n)] * 5
 
     for expected in expected_grants:
         await RisingEdge(dut.clk)
@@ -59,6 +63,10 @@ async def test_round_robin_rotation(dut):
 
 @cocotb.test()
 async def test_backpressure(dut):
+    n = len(dut.req)
+    all_requests = (1 << n) - 1
+    next_grant = 1 << (1 % n)
+
     clock = Clock(dut.clk, 10, unit="ns")
     clock.start()
 
@@ -69,7 +77,7 @@ async def test_backpressure(dut):
     await ClockCycles(dut.clk, 2)
 
     dut.rst_n.value = 1
-    dut.req.value = 0b1111
+    dut.req.value = all_requests
 
     await Timer(1, unit="ns")
 
@@ -86,7 +94,7 @@ async def test_backpressure(dut):
     await RisingEdge(dut.clk)
     await Timer(1, unit="ns")
 
-    assert int(dut.grant.value) == 0b0010
+    assert int(dut.grant.value) == next_grant
 
     dut.ready.value = 0
 
@@ -94,69 +102,74 @@ async def test_backpressure(dut):
         await ClockCycles(dut.clk, 1)
         await Timer(1, unit="ns")
 
-        assert int(dut.grant.value) == 0b0010
+        assert int(dut.grant.value) == next_grant
 
 @cocotb.test()
 async def test_sparse_requests(dut):
+    n = len(dut.req)
+
+    even_req = sum(1 << i for i in range(0, n, 2))
+    odd_req = sum(1 << i for i in range(1, n, 2))
+
     clock = Clock(dut.clk, 10, unit="ns")
     clock.start()
 
-    dut.rst_n.value = 0
-    dut.req.value = 0
-    dut.ready.value = 0
+    for req in [odd_req, even_req]:
+        # Reset before each scenario
+        dut.rst_n.value = 0
+        dut.req.value = 0
+        dut.ready.value = 0
 
-    await ClockCycles(dut.clk, 2)
+        await ClockCycles(dut.clk, 2)
 
-    dut.rst_n.value = 1
-    dut.req.value = 0b1010
+        dut.rst_n.value = 1
+        dut.req.value = req
 
-    await Timer(1, unit="ns")
-
-    assert int(dut.grant.value) == 0b0010
-
-    dut.ready.value = 1
-
-    expected_grants = [0b1000, 0b0010] * 5
-
-    for expected in expected_grants:
-        await ClockCycles(dut.clk, 1)
         await Timer(1, unit="ns")
 
-        assert int(dut.grant.value) == expected, (
-            f"expected {expected:04b}, "
-            f"got {int(dut.grant.value):04b}"
+        # Find all active requesters
+        active_indices = [
+            i for i in range(n)
+            if req & (1 << i)
+        ]
+
+        # Check initial grant
+        initial_grant = (
+            1 << active_indices[0]
+            if active_indices else 0
         )
 
-    dut.ready.value = 0
-    dut.rst_n.value = 0
-    dut.req.value = 0
+        assert int(dut.grant.value) == initial_grant
 
-    await ClockCycles(dut.clk, 2)
+        dut.ready.value = 1
 
-    dut.rst_n.value = 1
+        # Build expected grant sequence
+        if active_indices:
+            expected_grants = [
+                1 << active_indices[(i + 1) % len(active_indices)]
+                for i in range(len(active_indices))
+            ] * 5
+        else:
+            expected_grants = [0] * 5
 
-    # Test a different sparse request pattern
-    dut.req.value = 0b0101
+        # Verify rotation
+        for expected in expected_grants:
+            await ClockCycles(dut.clk, 1)
+            await Timer(1, unit="ns")
 
-    await Timer(1, unit="ns")
+            actual = int(dut.grant.value)
 
-    assert int(dut.grant.value) == 0b0001
-
-    dut.ready.value = 1
-
-    expected_grants = [0b0100, 0b0001] * 2
-
-    for expected in expected_grants:
-        await ClockCycles(dut.clk, 1)
-        await Timer(1, unit="ns")
-    
-        assert int(dut.grant.value) == expected, (
-            f"expected {expected:04b}, "
-            f"got {int(dut.grant.value):04b}"
-        )
+            assert actual == expected, (
+                f"N={n}, req={req:0{n}b}, "
+                f"expected={expected:0{n}b}, "
+                f"got={actual:0{n}b}"
+            )
 
 @cocotb.test()
 async def test_dynamic_requests(dut):
+    n = len(dut.req)
+    model = ArbiterModel(n)
+
     clock = Clock(dut.clk, 10, unit="ns")
     clock.start()
 
@@ -165,41 +178,42 @@ async def test_dynamic_requests(dut):
     dut.ready.value = 0
 
     await ClockCycles(dut.clk, 2)
-
     dut.rst_n.value = 1
-    dut.req.value = 0b1111
 
-    await Timer(1, unit="ns")
-    assert int(dut.grant.value) == 0b0001
+    all_requests = (1 << n) - 1
 
-    dut.ready.value = 1
+    patterns = [
+        all_requests,
+        all_requests,
+        sum(1 << i for i in range(0, n, 2)),
+        sum(1 << i for i in range(1, n, 2)),
+        0,
+        all_requests,
+    ]
 
-    # Accept R0
-    await ClockCycles(dut.clk, 1)
-    await Timer(1, unit="ns")
-    assert int(dut.grant.value) == 0b0010
+    for req in patterns:
+        await FallingEdge(dut.clk)
+        
+        dut.req.value = req
+        dut.ready.value = 1
 
-    # R0 and R1 stop requesting
-    dut.req.value = 0b1100
-    await Timer(1, unit="ns")
+        await Timer(1, unit="ns")
+        
+        expected = model.expected_grant(req)
+        actual_grant = int(dut.grant.value)
+        
+        assert actual_grant == 0 or (actual_grant & (actual_grant - 1)) == 0
+        assert (actual_grant & ~req) == 0
+        
+        assert actual_grant == expected, (
+            f"N={n}, req={req:0{n}b}, "
+            f"expected={expected:0{n}b}, "
+            f"actual={actual_grant:0{n}b}"
+        )
 
+        await RisingEdge(dut.clk)
+        model.update(actual_grant, 1)
 
-    assert int(dut.grant.value) == 0b0100
-
-    await ClockCycles(dut.clk, 1)
-    await Timer(1, unit="ns")
-
-    assert int(dut.grant.value) == 0b1000
-
-    dut.req.value = 0b0011
-    await Timer(1, unit="ns")
-
-    assert int(dut.grant.value) == 0b0001
-
-    await ClockCycles(dut.clk, 1)
-    await Timer(1, unit="ns")
-
-    assert int(dut.grant.value) == 0b0010
 
 @cocotb.test()
 async def test_randomized(dut):
@@ -218,7 +232,9 @@ async def test_randomized(dut):
 
     rng = random.Random(42)
 
-    for cycle in range(100):
+    for cycle in range(1000):
+        await FallingEdge(dut.clk)
+
         req = rng.randrange(1 << n)
         ready = rng.randrange(2)
 
@@ -230,6 +246,9 @@ async def test_randomized(dut):
         expected = model.expected_grant(req)
         actual_grant = int(dut.grant.value)
 
+        assert actual_grant == 0 or (actual_grant & (actual_grant - 1)) == 0
+        assert (actual_grant & ~req) == 0
+
         assert actual_grant == expected, (
             f"Cycle {cycle}: req={req:0{n}b}, "
             f"ready={ready}, expected={expected:0{n}b}, "
@@ -238,5 +257,3 @@ async def test_randomized(dut):
 
         await RisingEdge(dut.clk)
         model.update(actual_grant, ready)
-
-        await Timer(1, unit="ns")

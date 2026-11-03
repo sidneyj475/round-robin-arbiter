@@ -3,19 +3,26 @@ from cocotb_tools.runner import get_runner
 
 root = Path(__file__).resolve().parent
 
-runner = get_runner("verilator")
+for n in [1, 2, 4, 8]:
+    print(f"\n{'=' * 40}")
+    print(f"Testing arbiter with N={n}")
+    print(f"{'=' * 40}")
+          
+    runner = get_runner("verilator")
 
-runner.build(
-    sources=list((root / "rtl").glob("*.sv")),
-    hdl_toplevel="round_robin_arbiter",
-    build_dir=str(root / "sim_build"),
-    always=True,
-)
+    runner.build(
+        sources=list((root / "rtl").glob("*.sv")),
+        hdl_toplevel="round_robin_arbiter",
+        build_dir=str(root / f"sim_build/n{n}"),
+        build_args=[f"-GN={n}"],
+        always=True,
+    )
 
-runner.test(
-    hdl_toplevel="round_robin_arbiter",
-    test_module=["test_arbiter",
-    ],
-    test_dir=str(root / "tb"),
-    
-)
+    runner.test(
+        hdl_toplevel="round_robin_arbiter",
+        test_module=["test_arbiter",
+        ],
+        #test_filter="test_randomized",
+        test_dir=str(root / "tb"),
+        
+    )

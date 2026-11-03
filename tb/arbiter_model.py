@@ -14,7 +14,7 @@ class ArbiterModel:
 
     def update(self, grant, ready):
         if grant == 0 or not ready:
-            pass
+            return
         
         else:
             granted_index = grant.bit_length() - 1
