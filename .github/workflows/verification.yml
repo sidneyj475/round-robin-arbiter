@@ -8,6 +8,9 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
 
+    env:
+      VERILATOR_VERSION: "5.052"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -17,27 +20,44 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Restore Verilator cache
+        id: verilator-cache
+        uses: actions/cache@v4
+        with:
+          path: .tools/verilator
+          key: verilator-${{ runner.os }}-${{ runner.arch }}-5.052-v1
+
       - name: Install Verilator dependencies
+        if: steps.verilator-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             git make g++ autoconf \
             flex bison libfl2 libfl-dev \
-            zlib1g-dev
+            zlib1g-dev help2man
 
-      - name: Build and install Verilator 5.052
+      - name: Build and install Verilator
+        if: steps.verilator-cache.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 --branch v5.052 \
+          git clone --depth 1 --branch v${VERILATOR_VERSION} \
             https://github.com/verilator/verilator.git \
             /tmp/verilator
 
           cd /tmp/verilator
           autoconf
-          ./configure --prefix=/usr/local
-          make -j2
-          sudo make install
 
-          verilator --version
+          ./configure \
+            --prefix="${GITHUB_WORKSPACE}/.tools/verilator"
+
+          make -j2
+          make install
+
+      - name: Add Verilator to PATH
+        run: |
+          echo "${GITHUB_WORKSPACE}/.tools/verilator/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Verilator installation
+        run: verilator --version
 
       - name: Install Python dependencies
         run: |
