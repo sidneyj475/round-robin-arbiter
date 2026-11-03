@@ -184,3 +184,7 @@ Caching means Verilator itself isn't recompiled on every run. The simulation mod
 ## Scope and Limitations
 
 This project is simulation-based RTL verification of arbitration behavior. The tests cover reset, rotation, backpressure, sparse and changing requests, randomized inputs, and fairness under continuous contention. That's not an exhaustive proof over every possible input sequence, and there's no claim about physical implementation or timing closure.
+
+## References
+
+Matt Weber, "Arbiters: Design Ideas and Coding Styles", SNUG Boston, 2001.
